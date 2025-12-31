@@ -5,7 +5,19 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/src/context/AuthContext'
 import { supabase } from '@/src/lib/supabase'
 import AdminLayout from '@/src/components/AdminLayout'
-import type { Chat, PreEnteredProfile, Message } from '@/src/types'
+import type { Chat, PreEnteredProfile } from '@/src/types'
+
+interface Message {
+  id: string
+  chat_id?: string | null
+  match_id?: string | null
+  sender_id: string
+  content: string | null
+  photo_url?: string | null
+  read: boolean
+  created_at: string
+  [key: string]: unknown
+}
 
 export default function AdminMessages() {
   const { user } = useAuth()
@@ -15,6 +27,7 @@ export default function AdminMessages() {
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
 
   // Filters
   const [filters, setFilters] = useState({
@@ -29,16 +42,79 @@ export default function AdminMessages() {
   })
 
   useEffect(() => {
-    if (user) {
-      fetchChats()
+    if (!user) {
+      setLoading(false)
+      return
     }
+    fetchChats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, filters])
 
   useEffect(() => {
-    if (selectedChat) {
-      fetchMessages(selectedChat)
-      subscribeToMessages(selectedChat)
+    if (!selectedChat) {
+      setMessages([])
+      return
     }
+
+    let isMounted = true
+    let messageChannel: any = null
+
+    const setupSubscription = async () => {
+      // Fetch initial messages
+      await fetchMessages(selectedChat)
+      
+      if (!isMounted) return
+
+      // Scroll to bottom after loading messages
+      setTimeout(() => {
+        const container = document.getElementById('messages-container')
+        if (container) {
+          container.scrollTop = container.scrollHeight
+        }
+      }, 100)
+
+      // Subscribe to real-time updates
+      const channelName = `admin-chat:${selectedChat}-${Date.now()}`
+      messageChannel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'messages',
+            filter: `chat_id=eq.${selectedChat}`,
+          },
+          () => {
+            if (isMounted) {
+              fetchMessages(selectedChat)
+              fetchChats() // Refresh chat list to update last message
+              // Auto-scroll to bottom on new message
+              setTimeout(() => {
+                const container = document.getElementById('messages-container')
+                if (container) {
+                  container.scrollTop = container.scrollHeight
+                }
+              }, 100)
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          if (err) {
+            console.error('Message subscription error:', err)
+          }
+        })
+    }
+
+    setupSubscription()
+
+    return () => {
+      isMounted = false
+      if (messageChannel) {
+        supabase.removeChannel(messageChannel)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChat])
 
   const fetchChats = async () => {
@@ -64,21 +140,32 @@ export default function AdminMessages() {
 
       if (error) throw error
 
-      // Fetch last message for each chat
+      // Fetch last message and unread count for each chat
       const chatsWithMessages = await Promise.all(
         (data || []).map(async (chat) => {
-          const { data: lastMsg } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('chat_id', chat.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
+          const [lastMsgResult, unreadResult] = await Promise.all([
+            supabase
+              .from('messages')
+              .select('*')
+              .eq('chat_id', chat.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from('messages')
+              .select('*', { count: 'exact', head: true })
+              .eq('chat_id', chat.id)
+              .eq('read', false)
+              .neq('sender_id', user.id)
+          ])
+
+          const unreadCount = unreadResult.count || 0
+          setUnreadCounts((prev) => ({ ...prev, [chat.id]: unreadCount }))
 
           return {
             ...chat,
             profile: Array.isArray(chat.profile) ? chat.profile[0] : chat.profile,
-            lastMessage: lastMsg || undefined,
+            lastMessage: lastMsgResult.data || undefined,
           }
         })
       )
@@ -130,30 +217,48 @@ export default function AdminMessages() {
 
       if (error) throw error
       setMessages(data || [])
+      
+      // Mark messages as read when viewing
+      if (user && data) {
+        const unreadMessages = data.filter(
+          (msg) => !msg.read && msg.sender_id !== user.id
+        )
+        
+        if (unreadMessages.length > 0) {
+          const messageIds = unreadMessages.map((msg) => msg.id)
+          await supabase
+            .from('messages')
+            .update({ read: true })
+            .in('id', messageIds)
+          
+          // Update unread count
+          setUnreadCounts((prev) => ({ ...prev, [chatId]: 0 }))
+          // Refresh chat list to update unread status
+          fetchChats()
+        }
+      }
     } catch (error) {
       console.error('Error fetching messages:', error)
     }
   }
 
-  const subscribeToMessages = (chatId: string) => {
-    const channel = supabase
-      .channel(`chat:${chatId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'messages',
-          filter: `chat_id=eq.${chatId}`,
-        },
-        () => {
-          fetchMessages(chatId)
-        }
-      )
-      .subscribe()
+  // Calculate unread count for a chat
+  const getUnreadCount = async (chatId: string): Promise<number> => {
+    if (!user) return 0
+    
+    try {
+      const { count, error } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('chat_id', chatId)
+        .eq('read', false)
+        .neq('sender_id', user.id)
 
-    return () => {
-      supabase.removeChannel(channel)
+      if (error) throw error
+      return count || 0
+    } catch (error) {
+      console.error('Error fetching unread count:', error)
+      return 0
     }
   }
 
@@ -179,8 +284,14 @@ export default function AdminMessages() {
         .eq('id', selectedChat)
 
       setNewMessage('')
-      fetchMessages(selectedChat)
-      fetchChats()
+      // Messages will be updated via real-time subscription
+      // Scroll to bottom after a brief delay
+      setTimeout(() => {
+        const container = document.getElementById('messages-container')
+        if (container) {
+          container.scrollTop = container.scrollHeight
+        }
+      }, 100)
     } catch (error) {
       console.error('Error sending message:', error)
     }
@@ -300,10 +411,10 @@ export default function AdminMessages() {
                             {chat.lastMessage.content}
                           </p>
                         )}
-                        {isUnread && (
+                        {isUnread && unreadCounts[chat.id] > 0 && (
                           <div className="mt-1 flex items-center justify-end gap-2">
-                            <span className="inline-block w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                              0
+                            <span className="min-w-[20px] h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center px-1.5">
+                              {unreadCounts[chat.id] > 99 ? '99+' : unreadCounts[chat.id]}
                             </span>
                           </div>
                         )}
@@ -344,8 +455,16 @@ export default function AdminMessages() {
               </div>
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                {messages.map((message) => {
+              <div 
+                id="messages-container"
+                className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"
+              >
+                {messages.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-gray-500">No messages yet. Start the conversation!</p>
+                  </div>
+                ) : (
+                  messages.map((message) => {
                   const isOwn = message.sender_id === user?.id
                   return (
                     <div
@@ -369,7 +488,7 @@ export default function AdminMessages() {
                       </div>
                     </div>
                   )
-                })}
+                }))}
               </div>
 
               {/* Message Input */}

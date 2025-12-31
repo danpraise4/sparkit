@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/src/components/AdminLayout'
 import { useAuth } from '@/src/context/AuthContext'
@@ -97,6 +97,48 @@ export default function AdminAboutMe() {
     },
   ])
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Load existing data from profile
+  useEffect(() => {
+    if (profile?.profile_questions) {
+      const questionsData = profile.profile_questions as Record<string, unknown>
+      
+      setQuestions((prev) =>
+        prev.map((q) => {
+          const key = `question_${q.id}`
+          const savedValue = questionsData[key]
+          
+          if (savedValue !== undefined) {
+            if (q.type === 'checkbox') {
+              // Handle checkbox (array)
+              if (Array.isArray(savedValue)) {
+                return { ...q, selected: savedValue.filter((v): v is string => typeof v === 'string') }
+              } else if (typeof savedValue === 'string') {
+                try {
+                  const parsed = JSON.parse(savedValue)
+                  if (Array.isArray(parsed)) {
+                    return { ...q, selected: parsed.filter((v): v is string => typeof v === 'string') }
+                  }
+                } catch {
+                  return { ...q, selected: [savedValue] }
+                }
+              }
+            } else {
+              // Handle radio (string)
+              if (typeof savedValue === 'string') {
+                return { ...q, selected: savedValue }
+              } else if (Array.isArray(savedValue) && savedValue.length > 0) {
+                return { ...q, selected: String(savedValue[0]) }
+              }
+            }
+          }
+          return q
+        })
+      )
+    }
+    setLoading(false)
+  }, [profile])
 
   const handleAnswerChange = (questionId: number, value: string | string[]) => {
     setQuestions((prev) =>
@@ -118,11 +160,14 @@ export default function AdminAboutMe() {
         }
       })
 
+      const existingQuestions = (profile.profile_questions as Record<string, string | string[]>) || {}
+      const updatedQuestions: Record<string, string | string[]> = {
+        ...existingQuestions,
+        ...answers,
+      }
+      
       await updateProfile({
-        profile_questions: {
-          ...(profile.profile_questions as Record<string, unknown> || {}),
-          ...answers,
-        },
+        profile_questions: updatedQuestions as Record<string, string>,
       })
 
       toast.success('Answers saved successfully')
@@ -131,6 +176,18 @@ export default function AdminAboutMe() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="p-6 max-w-4xl">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+          </div>
+        </div>
+      </AdminLayout>
+    )
   }
 
   return (
@@ -154,7 +211,11 @@ export default function AdminAboutMe() {
                   question.options.map((option) => (
                     <label
                       key={option}
-                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer"
+                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                        question.selected === option
+                          ? 'bg-purple-100 border-2 border-purple-500'
+                          : 'hover:bg-gray-50'
+                      }`}
                     >
                       <input
                         type="radio"
@@ -171,7 +232,11 @@ export default function AdminAboutMe() {
                   question.options.map((option) => (
                     <label
                       key={option}
-                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer"
+                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                        (question.selected as string[])?.includes(option)
+                          ? 'bg-purple-100 border-2 border-purple-500'
+                          : 'hover:bg-gray-50'
+                      }`}
                     >
                       <input
                         type="checkbox"
