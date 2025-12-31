@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/src/context/AuthContext'
+import { supabase } from '@/src/lib/supabase'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
 import { Sparkles, ArrowLeft } from 'lucide-react'
@@ -16,17 +17,45 @@ interface VerifyOTPFormData {
 function VerifyOTPForm() {
   const [loading, setLoading] = useState(false)
   const [resending, setResending] = useState(false)
-  const { verifyOTP, resendOTP, user } = useAuth()
+  const [verifying, setVerifying] = useState(false)
+  const { verifyOTP, resendOTP, user, loading: authLoading } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const email = searchParams?.get('email') || ''
   const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<VerifyOTPFormData>()
 
-  // useEffect(() => {
-  //   if (user) {
-  //     router.push('/onboarding')
-  //   }
-  // }, [user, router])
+  // Redirect after successful verification
+  useEffect(() => {
+    if (authLoading || verifying) return // Wait for auth to finish loading or verification to complete
+    
+    if (user) {
+      // Check if user has interest preference
+      const checkInterestPreference = async () => {
+        try {
+          const { data: interestPref } = await supabase
+            .from('interest_preferences')
+            .select('preference')
+            .eq('user_id', user.id)
+            .maybeSingle()
+
+          // If no interest preference, redirect to interest selection
+          if (!interestPref) {
+            router.push('/onboarding/interest')
+            return
+          }
+
+          // If interest preference exists, go to discover
+          router.push('/discover')
+        } catch (error) {
+          console.error('Error checking interest preference:', error)
+          // Default to onboarding if check fails
+          router.push('/onboarding/interest')
+        }
+      }
+
+      checkInterestPreference()
+    }
+  }, [user, authLoading, verifying, router])
 
   const otpValue = watch('otp') || ''
 
@@ -74,18 +103,25 @@ function VerifyOTPForm() {
     }
 
     setLoading(true)
+    setVerifying(true)
     try {
       const { error } = await verifyOTP(email, data.otp)
       if (error) {
         const errorMessage = error instanceof Error ? error.message : 'Invalid verification code'
         toast.error(errorMessage)
+        setVerifying(false)
       } else {
         toast.success('Email verified successfully!')
         // User will be redirected by useEffect when user state updates
+        // Give it a moment for the auth state to update
+        setTimeout(() => {
+          setVerifying(false)
+        }, 1000)
       }
     } catch (error) {
       console.error('Verify OTP error:', error)
       toast.error('An unexpected error occurred')
+      setVerifying(false)
     } finally {
       setLoading(false)
     }
@@ -114,7 +150,7 @@ function VerifyOTPForm() {
     }
   }
 
-  if (loading && user) {
+  if ((loading && user) || (verifying && user) || (authLoading && user)) {
     return <LoadingSpinner />
   }
 
