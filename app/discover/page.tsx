@@ -12,7 +12,7 @@ import type { PreEnteredProfile } from '@/src/types'
 import { Settings, Users } from 'lucide-react'
 
 export default function Discover() {
-  const { user, profile } = useAuth()
+  const { user, profile, loading: authLoading } = useAuth()
   const router = useRouter()
   const [profiles, setProfiles] = useState<PreEnteredProfile[]>([])
   const [loading, setLoading] = useState(true)
@@ -25,6 +25,7 @@ export default function Discover() {
 
     try {
       setLoading(true)
+      setProfiles([])
 
       // Get user's interest preference
       const { data: interestPref } = await supabase
@@ -35,6 +36,7 @@ export default function Discover() {
       
       // If no preference, redirect to interest selection
       if (!interestPref) {
+        setLoading(false)
         router.push('/onboarding/interest')
         return
       }
@@ -99,10 +101,15 @@ export default function Discover() {
   }, [user, router])
 
   useEffect(() => {
-    if (user) {
-      fetchProfiles()
+    if (authLoading) return // Wait for auth to finish loading
+    
+    if (!user) {
+      setLoading(false)
+      return
     }
-  }, [user, fetchProfiles])
+    fetchProfiles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading])
 
   const handleProfileClick = (profile: PreEnteredProfile) => {
     router.push(`/discover/${profile.id}`)

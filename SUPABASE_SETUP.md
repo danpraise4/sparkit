@@ -90,3 +90,5 @@ All RLS policies are included in the migration file. Make sure they're applied c
 - Review Supabase documentation
 - Check project logs in dashboard
 
+
+

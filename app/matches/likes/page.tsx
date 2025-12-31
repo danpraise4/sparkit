@@ -21,21 +21,25 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 export default function ViewLikes() {
-  const { user, profile } = useAuth()
+  const { user, profile, loading: authLoading } = useAuth()
   const router = useRouter()
   const [likes, setLikes] = useState<Array<{ swiper_id: string; swiper?: Profile; created_at: string }>>([])
   const [loading, setLoading] = useState(true)
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
 
   const hasPremium = profile?.subscription_tier === 'premium_messages' || 
-                     profile?.subscription_tier === 'premium' || 
-                     profile?.subscription_tier === 'vip'
+                       profile?.subscription_tier === 'premium' || 
+                       profile?.subscription_tier === 'vip'
 
   const fetchLikes = useCallback(async () => {
-    if (!user) return
+    if (!user) {
+      setLoading(false)
+      return
+    }
 
     try {
       setLoading(true)
+      setLikes([])
       
       // Get users who liked the current user (from swipes table)
       const { data: swipes, error } = await supabase
@@ -43,7 +47,14 @@ export default function ViewLikes() {
         .select(`
           swiper_id,
           created_at,
-          swiper:profiles!swipes_swiper_id_fkey(*)
+          swiper:profiles!swipes_swiper_id_fkey(
+            id,
+            full_name,
+            age,
+            photos,
+            email,
+            bio
+          )
         `)
         .eq('swiped_id', user.id)
         .eq('action', 'like')
@@ -160,10 +171,15 @@ export default function ViewLikes() {
   }
 
   useEffect(() => {
-    if (user) {
-      fetchLikes()
+    if (authLoading) return // Wait for auth to finish loading
+    
+    if (!user) {
+      setLoading(false)
+      return
     }
-  }, [user, fetchLikes])
+    fetchLikes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading])
 
   if (loading) {
     return (
@@ -226,12 +242,12 @@ export default function ViewLikes() {
               )}
 
               <div className="grid grid-cols-2 gap-4">
-                {likes.map((like) => {
+              {likes.map((like) => {
                   const swiper = like.swiper
                   const swiperName = swiper?.full_name || swiper?.email?.split('@')[0] || 'Someone'
                   const hasPhoto = swiper?.photos && swiper.photos.length > 0
-
-                  return (
+                
+                return (
                     <div
                       key={like.swiper_id}
                       className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer"
@@ -258,19 +274,19 @@ export default function ViewLikes() {
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
                             <span className="text-6xl font-bold text-gray-400">{swiperName.charAt(0)}</span>
-                          </div>
-                        )}
+                        </div>
+                      )}
                         {/* Heart badge */}
                         <div className="absolute top-2 right-2 w-8 h-8 bg-red-500 rounded-full flex items-center justify-center shadow-lg">
                           <Heart className="w-4 h-4 text-white fill-white" />
-                        </div>
                       </div>
+                    </div>
 
-                      {/* Profile Info */}
+                    {/* Profile Info */}
                       <div className="p-3">
                         <h3 className="font-semibold text-gray-900 truncate text-sm">
                           {hasPremium ? swiperName : 'Someone'}
-                        </h3>
+                      </h3>
                         {hasPremium && swiper?.age && (
                           <p className="text-xs text-gray-600">{swiper.age}</p>
                         )}
@@ -294,9 +310,9 @@ export default function ViewLikes() {
                         </div>
                       )}
                     </div>
-                  )
-                })}
-              </div>
+                )
+              })}
+            </div>
             </>
           )}
         </div>

@@ -177,7 +177,7 @@ function SwipeableCard({
 }
 
 export default function Nearby() {
-  const { user, profile } = useAuth()
+  const { user, profile, loading: authLoading } = useAuth()
   const router = useRouter()
   const [nearbyProfiles, setNearbyProfiles] = useState<PreEnteredProfile[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -186,10 +186,14 @@ export default function Nearby() {
   const [swiping, setSwiping] = useState(false)
 
   const fetchNearbyProfiles = useCallback(async () => {
-    if (!user) return
+    if (!user) {
+      setLoading(false)
+      return
+    }
 
     try {
       setLoading(true)
+      setNearbyProfiles([])
 
       // Get user's interest preference
       const { data: interestPref } = await supabase
@@ -200,6 +204,7 @@ export default function Nearby() {
       
       // If no preference, redirect to interest selection
       if (!interestPref) {
+        setLoading(false)
         router.push('/onboarding/interest')
         return
       }
@@ -227,10 +232,19 @@ export default function Nearby() {
 
       const { data, error } = await query
 
-      if (error) throw error
+      if (error) {
+        console.error('Error fetching nearby profiles:', error)
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        setNearbyProfiles([])
+        setLoading(false)
+        return
+      }
 
       // Randomize the profiles
-      const shuffledProfiles = shuffleArray(data || [])
+      const shuffledProfiles = shuffleArray(data)
       
       // Limit to 30 profiles for nearby
       const limitedProfiles = shuffledProfiles.slice(0, 30)
@@ -319,11 +333,17 @@ export default function Nearby() {
   }
 
   useEffect(() => {
-    if (profile && user) {
-      fetchNearbyProfiles()
-      fetchUnreadCount()
+    if (authLoading) return // Wait for auth to finish loading
+    
+    if (!user) {
+      setLoading(false)
+      return
     }
-  }, [profile, user, fetchNearbyProfiles, fetchUnreadCount])
+    
+    fetchNearbyProfiles()
+    fetchUnreadCount()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading])
 
   if (loading) {
     return (

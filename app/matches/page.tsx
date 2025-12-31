@@ -28,7 +28,7 @@ interface Match {
 }
 
 export default function Matches() {
-  const { user, profile } = useAuth()
+  const { user, profile, loading: authLoading } = useAuth()
   const router = useRouter()
   const [matches, setMatches] = useState<Match[]>([])
   const [newMatches, setNewMatches] = useState<Match[]>([])
@@ -189,100 +189,122 @@ export default function Matches() {
   }, [user, fetchLikes])
 
   useEffect(() => {
-    if (!user) return
-
-    fetchMatches()
+    if (authLoading) return // Wait for auth to finish loading
     
-    // Subscribe to new matches in real-time
-    const matchesChannel = supabase
-      .channel(`matches-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'matches',
-          filter: `user1_id=eq.${user.id} OR user2_id=eq.${user.id}`
-        },
-        () => {
-          fetchMatches()
-        }
-      )
-      .subscribe()
+    if (!user) {
+      setLoading(false)
+      return
+    }
 
-    // Subscribe to new chats in real-time
-    const chatsChannel = supabase
-      .channel(`chats-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chats',
-          filter: `user_id=eq.${user.id}`
-        },
-        () => {
-          fetchMatches()
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'chats',
-          filter: `user_id=eq.${user.id}`
-        },
-        () => {
-          fetchMatches()
-        }
-      )
-      .subscribe()
+    let isMounted = true
+    let matchesChannel: any = null
+    let chatsChannel: any = null
+    let messagesChannel: any = null
 
-    // Subscribe to new messages in real-time
-    const messagesChannel = supabase
-      .channel(`messages-list-${user.id}`, {
-        config: {
-          broadcast: { self: false }
-        }
-      })
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages'
-        },
-        (payload) => {
-          console.log('New message in matches list:', payload.new)
-          fetchMatches() // Refresh to update last messages
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages'
-        },
-        () => {
-          fetchMatches() // Refresh to update last messages
-        }
-      )
-      .subscribe((status, err) => {
-        if (err) {
-          console.error('Messages subscription error:', err)
-        } else {
-          console.log('Matches messages subscription status:', status)
-        }
-      })
+    const setupSubscriptions = async () => {
+      // Fetch initial data
+      await fetchMatches()
+      
+      if (!isMounted) return
+
+      // Subscribe to new matches in real-time
+      matchesChannel = supabase
+        .channel(`matches-${user.id}-${Date.now()}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'matches',
+            filter: `user1_id=eq.${user.id} OR user2_id=eq.${user.id}`
+          },
+          () => {
+            if (isMounted) fetchMatches()
+          }
+        )
+        .subscribe()
+
+      // Subscribe to new chats in real-time
+      chatsChannel = supabase
+        .channel(`chats-${user.id}-${Date.now()}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'chats',
+            filter: `user_id=eq.${user.id}`
+          },
+          () => {
+            if (isMounted) fetchMatches()
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'chats',
+            filter: `user_id=eq.${user.id}`
+          },
+          () => {
+            if (isMounted) fetchMatches()
+          }
+        )
+        .subscribe()
+
+      // Subscribe to new messages in real-time
+      messagesChannel = supabase
+        .channel(`messages-list-${user.id}-${Date.now()}`, {
+          config: {
+            broadcast: { self: false }
+          }
+        })
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages'
+          },
+          () => {
+            if (isMounted) fetchMatches()
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'messages'
+          },
+          () => {
+            if (isMounted) fetchMatches()
+          }
+        )
+        .subscribe((status, err) => {
+          if (err) {
+            console.error('Messages subscription error:', err)
+          }
+        })
+    }
+
+    setupSubscriptions()
 
     return () => {
-      supabase.removeChannel(matchesChannel)
-      supabase.removeChannel(chatsChannel)
-      supabase.removeChannel(messagesChannel)
+      isMounted = false
+      if (matchesChannel) {
+        supabase.removeChannel(matchesChannel)
+      }
+      if (chatsChannel) {
+        supabase.removeChannel(chatsChannel)
+      }
+      if (messagesChannel) {
+        supabase.removeChannel(messagesChannel)
+      }
     }
-  }, [user?.id, fetchMatches])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, authLoading])
 
   const toggleMatchSelection = (matchId: string) => {
     setSelectedMatches((prev) => {

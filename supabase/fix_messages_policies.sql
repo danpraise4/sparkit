@@ -56,3 +56,5 @@ CREATE POLICY "Users can update their own messages"
   ON messages FOR UPDATE
   USING (auth.uid() = sender_id);
 
+
+
