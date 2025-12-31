@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import AdminLayout from '@/src/components/AdminLayout'
 import { useAuth } from '@/src/context/AuthContext'
 import toast from 'react-hot-toast'
@@ -12,6 +12,44 @@ export default function AdminAboutMeAvailability() {
   const [hobbies, setHobbies] = useState<string[]>(['Travel and adventure', 'Art and culture', 'Sports and fitness', 'Gaming and technology', 'Movies and series'])
   const [occupation, setOccupation] = useState('Freelancer/Self-employed')
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Load existing data from profile
+  useEffect(() => {
+    if (profile?.profile_questions) {
+      const questions = profile.profile_questions as Record<string, unknown>
+      
+      if (questions.availability && typeof questions.availability === 'string') {
+        setAvailability(questions.availability)
+      }
+      
+      if (questions.lifeMotto && typeof questions.lifeMotto === 'string') {
+        setLifeMotto(questions.lifeMotto)
+      }
+      
+      if (questions.hobbies) {
+        if (Array.isArray(questions.hobbies)) {
+          setHobbies(questions.hobbies.filter((h): h is string => typeof h === 'string'))
+        } else if (typeof questions.hobbies === 'string') {
+          // Handle case where hobbies might be stored as a single string
+          try {
+            const parsed = JSON.parse(questions.hobbies)
+            if (Array.isArray(parsed)) {
+              setHobbies(parsed.filter((h): h is string => typeof h === 'string'))
+            }
+          } catch {
+            // If not JSON, treat as single hobby
+            setHobbies([questions.hobbies])
+          }
+        }
+      }
+      
+      if (questions.occupation && typeof questions.occupation === 'string') {
+        setOccupation(questions.occupation)
+      }
+    }
+    setLoading(false)
+  }, [profile])
 
   const availabilityOptions = [
     'Rarely available (very busy with work)',
@@ -69,14 +107,17 @@ export default function AdminAboutMeAvailability() {
 
     try {
       setSaving(true)
+      const existingQuestions = (profile.profile_questions as Record<string, string | string[]>) || {}
+      const updatedQuestions: Record<string, string | string[]> = {
+        ...existingQuestions,
+        availability,
+        lifeMotto,
+        hobbies, // hobbies is string[]
+        occupation,
+      }
+      
       await updateProfile({
-        profile_questions: {
-          ...(profile.profile_questions as Record<string, unknown> || {}),
-          availability,
-          lifeMotto,
-          hobbies,
-          occupation,
-        },
+        profile_questions: updatedQuestions as Record<string, string>,
       })
 
       toast.success('Answers saved successfully')
@@ -85,6 +126,18 @@ export default function AdminAboutMeAvailability() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="p-6 max-w-4xl">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+          </div>
+        </div>
+      </AdminLayout>
+    )
   }
 
   return (
