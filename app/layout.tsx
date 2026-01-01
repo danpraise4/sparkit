@@ -1,9 +1,17 @@
 import { AuthProvider } from '@/src/context/AuthContext'
 import ErrorBoundary from '@/src/components/ErrorBoundary'
 import { Toaster } from 'react-hot-toast'
+import { Poppins } from 'next/font/google'
 import '@/src/index.css'
 import type { Metadata } from 'next'
 import { ReactNode } from 'react'
+
+const poppins = Poppins({
+  weight: ['300', '400', '500', '600', '700', '800'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-poppins',
+})
 
 export const metadata: Metadata = {
   title: 'Spark - Find Your Match',
@@ -12,10 +20,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <head>
-        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-      </head>
+    <html lang="en" className={poppins.variable}>
       <body>
         <ErrorBoundary>
           <AuthProvider>
